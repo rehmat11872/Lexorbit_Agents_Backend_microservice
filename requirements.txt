@@ -58,3 +58,6 @@ urllib3==2.5.0
 vine==5.1.0
 wcwidth==0.2.14
 zstandard==0.25.0
+gunicorn
+whitenoise
+dj-database-url
