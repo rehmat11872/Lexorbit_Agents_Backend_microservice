@@ -61,3 +61,4 @@ zstandard==0.25.0
 gunicorn
 whitenoise
 dj-database-url
+django-cors-headers==4.3.1

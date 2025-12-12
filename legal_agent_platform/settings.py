@@ -31,11 +31,26 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-xt6m(mwd&4c7_d3f&i7ty2nab7
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+ALLOWED_HOSTS = os.getenv(
+    'ALLOWED_HOSTS',
+    'localhost,127.0.0.1'
+).split(',')
 
+# CORS & CSRF Configuration
+CORS_ALLOW_ALL_ORIGINS = False
 
-# CSRF Trusted Origins for Render
-CSRF_TRUSTED_ORIGINS = ['https://*.onrender.com']
+CORS_ALLOWED_ORIGINS = [
+    "https://lexorbit.netlify.app",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    "https://lexorbit.netlify.app",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+]
+
 # Application definition
 
 INSTALLED_APPS = [
@@ -50,7 +65,8 @@ INSTALLED_APPS = [
     'rest_framework',
     'django_filters',
     'rest_framework_simplejwt',
-    
+    'corsheaders',
+
     # Local apps
     'court_data',
     'data_ingestion',
@@ -58,6 +74,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',  
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',  
     'django.contrib.sessions.middleware.SessionMiddleware',
