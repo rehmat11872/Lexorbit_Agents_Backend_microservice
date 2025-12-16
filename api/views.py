@@ -1462,6 +1462,70 @@ def _sync_latest_judge_data():
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
+def judges_search(request):
+    """Enhanced judges search with complete analytics"""
+    search = request.query_params.get('search', '')
+    limit = int(request.query_params.get('limit', 3))
+    page = int(request.query_params.get('page', 1))
+    
+    queryset = Judge.objects.select_related().prefetch_related(
+        'authored_opinions__cluster__docket__court',
+        'docket_relations'
+    ).all()
+    
+    if search:
+        queryset = queryset.filter(
+            Q(full_name__icontains=search) |
+            Q(authored_opinions__cluster__docket__court__name__icontains=search)
+        ).distinct()
+    
+    total_results = queryset.count()
+    start = (page - 1) * limit
+    end = start + limit
+    judges_page = queryset[start:end]
+    
+    judges_data = []
+    for judge in judges_page:
+        court = 'Unknown'
+        if judge.positions:
+            for pos in judge.positions:
+                if pos.get('court'):
+                    court = pos['court']
+                    break
+        
+        relations = JudgeDocketRelation.objects.filter(judge=judge)
+        total_with_outcome = relations.exclude(outcome='').count()
+        granted = relations.filter(outcome__icontains='grant').count()
+        grant_rate = (granted / total_with_outcome * 100) if total_with_outcome > 0 else 0
+        
+        outcomes = CaseOutcome.objects.filter(
+            docket__judge_relations__judge=judge,
+            decision_days__isnull=False
+        )
+        avg_decision_time = outcomes.aggregate(avg=Avg('decision_days'))['avg'] or 0
+        
+        total_cases = judge.authored_opinions.count()
+        
+        judges_data.append({
+            'judge_id': judge.judge_id,
+            'name': judge.full_name,
+            'court': court,
+            'grant_rate': round(grant_rate, 1),
+            'total_cases': total_cases,
+            'avg_decision_time': round(avg_decision_time, 1)
+        })
+    
+    return Response({
+        'total_results': total_results,
+        'page': page,
+        'limit': limit,
+        'total_pages': (total_results + limit - 1) // limit,
+        'judges': judges_data
+    })
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
 def judge_analytics_summary(request):
     """Get judge analytics summary - judges analyzed, cases tracked, courts covered, success rate"""
     
