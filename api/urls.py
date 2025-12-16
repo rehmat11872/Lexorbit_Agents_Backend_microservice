@@ -10,7 +10,8 @@ from .views import (
     OpinionViewSet, OpinionsCitedViewSet, StatuteViewSet,
     legal_research_query, case_prediction, semantic_search, statistics,
     legal_research_advanced, judge_case_history, citation_network,
-    most_influential_cases, case_prediction_advanced
+    most_influential_cases, case_prediction_advanced, judges_search,
+    judge_analytics_summary, judge_analytics_overview
 )
 
 # Create router and register viewsets
@@ -44,5 +45,10 @@ urlpatterns = [
     
     # Statistics
     path('statistics/', statistics, name='statistics'),
+    path('judges/search/', judges_search, name='judges_search'),
+    
+    # Judge Analytics
+    path('judge-analytics/summary/', judge_analytics_summary, name='judge_analytics_summary'),
+    path('judge-analytics/overview/', judge_analytics_overview, name='judge_analytics_overview'),
 ]
 
