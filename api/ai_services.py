@@ -67,7 +67,7 @@ class EmbeddingService:
                 SELECT 
                     id,
                     opinion_id,
-                    embedding <=> %s::vector AS distance
+                    embedding::vector <=> %s::vector AS distance
                 FROM opinions
                 WHERE embedding IS NOT NULL
                 ORDER BY distance
