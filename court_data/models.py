@@ -4,7 +4,7 @@ Matches: Court → Docket → OpinionCluster → Opinion → Citations
 """
 
 from django.db import models
-from pgvector.django import VectorField
+# from pgvector.django import VectorField
 
 
 class Court(models.Model):
@@ -56,7 +56,7 @@ class Judge(models.Model):
     positions = models.JSONField(default=list, blank=True)
     
     # Embedding for semantic search
-    embedding = VectorField(dimensions=1536, null=True, blank=True)
+    embedding = models.TextField(null=True, blank=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -102,7 +102,7 @@ class Docket(models.Model):
     pacer_case_id = models.CharField(max_length=200, blank=True)
     
     # Embedding for semantic search
-    embedding = VectorField(dimensions=1536, null=True, blank=True)
+    embedding = models.TextField(null=True, blank=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -189,7 +189,7 @@ class Opinion(models.Model):
     extracted_citations = models.JSONField(default=list, blank=True)
     
     # Embedding for semantic search (CRITICAL!)
-    embedding = VectorField(dimensions=1536, null=True, blank=True)
+    embedding = models.TextField(null=True, blank=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -301,7 +301,7 @@ class Statute(models.Model):
     repeal_date = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     related_opinions = models.ManyToManyField(Opinion, blank=True, related_name='cited_statutes')
-    embedding = VectorField(dimensions=1536, null=True, blank=True)
+    embedding = models.TextField(null=True, blank=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
