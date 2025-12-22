@@ -236,7 +236,7 @@ class JudgeViewSet(viewsets.ReadOnlyModelViewSet):
             docket__date_terminated__gte=six_months_ago,
             docket__date_terminated__isnull=False
         ).extra({
-            'month': "DATE_TRUNC('month', docket.date_terminated)"
+            'month': "DATE_TRUNC('month', \"dockets\".\"date_terminated\")"
         }).values('month').annotate(
             granted=Count('id', filter=Q(outcome_type__icontains='grant')),
             denied=Count('id', filter=Q(outcome_type__icontains='deny'))
@@ -248,7 +248,7 @@ class JudgeViewSet(viewsets.ReadOnlyModelViewSet):
             docket__date_terminated__isnull=False,
             decision_days__isnull=False
         ).extra({
-            'month': "DATE_TRUNC('month', docket.date_terminated)"
+            'month': "DATE_TRUNC('month', \"dockets\".\"date_terminated\")"
         }).values('month').annotate(
             avg_days=Avg('decision_days')
         ).order_by('month')
@@ -523,6 +523,90 @@ class JudgeViewSet(viewsets.ReadOnlyModelViewSet):
         
         return Response({'insights': insights})
     
+    @action(detail=True, methods=['get'])
+    def patterns(self, request, pk=None):
+        """Get judge decision patterns and behavioral analysis"""
+        judge = self.get_object()
+        
+        # Get all outcomes for pattern analysis
+        outcomes = CaseOutcome.objects.filter(docket__judge_relations__judge=judge)
+        relations = JudgeDocketRelation.objects.filter(judge=judge)
+        
+        # Decision timing patterns
+        decision_times = outcomes.filter(decision_days__isnull=False)
+        avg_decision_time = decision_times.aggregate(avg=Avg('decision_days'))['avg'] or 0
+        
+        # Fast vs slow decisions
+        fast_decisions = decision_times.filter(decision_days__lt=30).count()
+        slow_decisions = decision_times.filter(decision_days__gt=180).count()
+        total_decisions = decision_times.count()
+        
+        # Case type preferences
+        opinions = judge.authored_opinions.select_related('cluster__docket').all()
+        case_type_patterns = {}
+        for opinion in opinions:
+            if opinion.cluster and opinion.cluster.docket:
+                nature = opinion.cluster.docket.nature_of_suit or 'Other'
+                case_type_patterns[nature] = case_type_patterns.get(nature, 0) + 1
+        
+        # Grant rate by case type
+        grant_patterns = []
+        for case_type in case_type_patterns.keys():
+            type_relations = relations.filter(docket__nature_of_suit=case_type)
+            total_type = type_relations.exclude(outcome='').count()
+            granted_type = type_relations.filter(outcome__icontains='grant').count()
+            
+            if total_type > 0:
+                grant_rate = (granted_type / total_type * 100)
+                grant_patterns.append({
+                    'case_type': case_type,
+                    'grant_rate': round(grant_rate, 1),
+                    'total_cases': total_type
+                })
+        
+        # Sort by grant rate
+        grant_patterns.sort(key=lambda x: x['grant_rate'], reverse=True)
+        
+        # Behavioral insights
+        behavioral_patterns = []
+        
+        if avg_decision_time < 60:
+            behavioral_patterns.append({
+                'pattern': 'Quick Decision Maker',
+                'description': f'Makes decisions in average {avg_decision_time:.0f} days',
+                'strength': 'High'
+            })
+        
+        if fast_decisions / total_decisions > 0.3 if total_decisions > 0 else False:
+            behavioral_patterns.append({
+                'pattern': 'Efficient Processing',
+                'description': f'{(fast_decisions/total_decisions*100):.0f}% of decisions made within 30 days',
+                'strength': 'Medium'
+            })
+        
+        # Most favorable case type
+        if grant_patterns:
+            top_grant_type = grant_patterns[0]
+            if top_grant_type['grant_rate'] > 70:
+                behavioral_patterns.append({
+                    'pattern': f'Favorable to {top_grant_type["case_type"]}',
+                    'description': f'{top_grant_type["grant_rate"]}% grant rate in {top_grant_type["case_type"]} cases',
+                    'strength': 'High'
+                })
+        
+        return Response({
+            'judge_id': judge.judge_id,
+            'judge_name': judge.full_name,
+            'decision_timing': {
+                'avg_decision_days': round(avg_decision_time, 1),
+                'fast_decisions_pct': round((fast_decisions/total_decisions*100), 1) if total_decisions > 0 else 0,
+                'slow_decisions_pct': round((slow_decisions/total_decisions*100), 1) if total_decisions > 0 else 0
+            },
+            'case_type_preferences': case_type_patterns,
+            'grant_rate_by_type': grant_patterns,
+            'behavioral_patterns': behavioral_patterns
+        })
+    
     @action(detail=True, methods=['post'])
     def apply_insights(self, request, pk=None):
         """Apply selected insights to reports, recommendations, predictions"""
@@ -540,16 +624,13 @@ class JudgeViewSet(viewsets.ReadOnlyModelViewSet):
     
     @action(detail=True, methods=['get'])
     def case_history(self, request, pk=None):
-        """Get case history with real-time CourtListener data sync"""
+        """Get case history with exact frontend format"""
         judge = self.get_object()
         
-        # Sync with CourtListener for latest data
-        self._sync_judge_cases_from_courtlistener(judge)
-        
-        # Get query parameters
+        # Get query parameters with defaults
         search = request.query_params.get('search', '')
         case_type = request.query_params.get('case_type', '')
-        case_status = request.query_params.get('case_status', '')  # 'Active' or 'Closed'
+        case_status = request.query_params.get('case_status', '')
         date_from = request.query_params.get('date_from', '')
         date_to = request.query_params.get('date_to', '')
         limit = int(request.query_params.get('limit', 5))
@@ -560,78 +641,55 @@ class JudgeViewSet(viewsets.ReadOnlyModelViewSet):
             'cluster__docket__court'
         ).all()
         
-        # 1. Apply filters first
+        # Apply filters
         if case_type:
-            opinions = opinions.filter(
-                cluster__docket__nature_of_suit__icontains=case_type
-            )
+            opinions = opinions.filter(cluster__docket__nature_of_suit__icontains=case_type)
         
         if case_status == 'Active':
-            opinions = opinions.filter(
-                cluster__docket__date_terminated__isnull=True
-            )
+            opinions = opinions.filter(cluster__docket__date_terminated__isnull=True)
         elif case_status == 'Closed':
-            opinions = opinions.filter(
-                cluster__docket__date_terminated__isnull=False
-            )
+            opinions = opinions.filter(cluster__docket__date_terminated__isnull=False)
         
         if date_from:
-            opinions = opinions.filter(
-                cluster__docket__date_filed__gte=date_from
-            )
+            opinions = opinions.filter(cluster__docket__date_filed__gte=date_from)
         if date_to:
-            opinions = opinions.filter(
-                cluster__docket__date_filed__lte=date_to
-            )
+            opinions = opinions.filter(cluster__docket__date_filed__lte=date_to)
         
-        # 2. Apply search across case title, case number, case type
         if search:
             opinions = opinions.filter(
                 Q(cluster__docket__case_name__icontains=search) |
                 Q(cluster__docket__case_name_short__icontains=search) |
-                Q(cluster__docket__docket_number__icontains=search) |
-                Q(cluster__docket__nature_of_suit__icontains=search)
+                Q(cluster__docket__docket_number__icontains=search)
             )
         
-        # Calculate summary statistics before pagination
+        # Calculate summary before pagination
         total_cases = opinions.count()
-        active_cases = opinions.filter(
-            cluster__docket__date_terminated__isnull=True
-        ).count()
-        closed_cases = opinions.filter(
-            cluster__docket__date_terminated__isnull=False
-        ).count()
+        active_cases = opinions.filter(cluster__docket__date_terminated__isnull=True).count()
+        closed_cases = opinions.filter(cluster__docket__date_terminated__isnull=False).count()
         
-        # Average decision time
+        # Average decision time from CaseOutcome
         outcomes = CaseOutcome.objects.filter(
             docket__judge_relations__judge=judge,
             decision_days__isnull=False
         )
-        if case_type:
-            outcomes = outcomes.filter(
-                docket__nature_of_suit__icontains=case_type
-            )
-        avg_decision_time = outcomes.aggregate(
-            avg=Avg('decision_days')
-        )['avg'] or 0
+        avg_decision_time = outcomes.aggregate(avg=Avg('decision_days'))['avg'] or 0
         
-        # 3. Apply pagination
+        # Apply pagination
         start = (page - 1) * limit
         end = start + limit
         paginated_opinions = opinions.order_by('-cluster__docket__date_filed')[start:end]
         
-        # Format case history for frontend cards
+        # Format cases for exact frontend schema
         cases = []
         for opinion in paginated_opinions:
             cluster = opinion.cluster
-            if not cluster:
-                continue
-            docket = cluster.docket
-            if not docket:
+            if not cluster or not cluster.docket:
                 continue
             
-            # Calculate case duration
-            duration_days = None
+            docket = cluster.docket
+            
+            # Calculate duration
+            duration_days = 0
             if docket.date_filed and docket.date_terminated:
                 duration_days = (docket.date_terminated - docket.date_filed).days
             elif docket.date_filed:
@@ -640,46 +698,61 @@ class JudgeViewSet(viewsets.ReadOnlyModelViewSet):
             # Get case outcome
             try:
                 outcome = CaseOutcome.objects.get(docket=docket)
-                case_outcome = outcome.outcome_type
-                decision_days = outcome.decision_days
+                decision = outcome.outcome_type or 'Pending'
             except CaseOutcome.DoesNotExist:
-                case_outcome = 'Pending'
-                decision_days = None
+                decision = 'Pending'
             
-            # Get citations count
+            # Determine precedent value based on citations
             citations_count = opinion.cited_by.count()
+            if citations_count > 50:
+                precedent_value = 'High'
+            elif citations_count > 10:
+                precedent_value = 'Medium'
+            else:
+                precedent_value = 'Low'
+            
+            # Extract parties from docket.parties JSON
+            plaintiff = 'Unknown'
+            defendant = 'Unknown'
+            if docket.parties:
+                try:
+                    parties_data = docket.parties if isinstance(docket.parties, list) else []
+                    for party in parties_data:
+                        if isinstance(party, dict):
+                            if party.get('type', '').lower() in ['plaintiff', 'petitioner']:
+                                plaintiff = party.get('name', 'Unknown')
+                            elif party.get('type', '').lower() in ['defendant', 'respondent']:
+                                defendant = party.get('name', 'Unknown')
+                except:
+                    pass
             
             cases.append({
-                'case_id': docket.docket_id,
-                'case_title': docket.case_name_short or docket.case_name,
                 'case_number': docket.docket_number or 'N/A',
-                'case_type': docket.nature_of_suit or 'Unknown',
-                'court': docket.court.name if docket.court else 'Unknown',
-                'date_filed': docket.date_filed,
-                'date_terminated': docket.date_terminated,
+                'title': docket.case_name_short or docket.case_name or 'Unknown',
+                'description': opinion.plain_text[:200] + '...' if opinion.plain_text else 'No description available',
+                'type': docket.nature_of_suit or 'Unknown',
                 'status': 'Closed' if docket.date_terminated else 'Active',
-                'outcome': case_outcome,
+                'decision': decision,
+                'filed_date': docket.date_filed,
+                'decided_date': docket.date_terminated,
                 'duration_days': duration_days,
-                'decision_days': decision_days,
-                'citations_count': citations_count,
-                'opinion_excerpt': opinion.plain_text[:200] + '...' if opinion.plain_text else '',
-                'parties': docket.parties or []
+                'amount': None,  # Not available in CourtListener data
+                'precedent_value': precedent_value,
+                'plaintiff': plaintiff,
+                'defendant': defendant
             })
         
-        # Summary statistics
-        summary = {
-            'total_cases': total_cases,
-            'active_cases': active_cases,
-            'closed_cases': closed_cases,
-            'avg_decision_time': round(avg_decision_time, 1)
-        }
-        
         return Response({
-            'summary': summary,
+            'summary': {
+                'total_cases': total_cases,
+                'active_cases': active_cases,
+                'closed_cases': closed_cases,
+                'avg_decision_time': int(round(avg_decision_time))
+            },
             'cases': cases,
             'pagination': {
                 'page': page,
-                'limit': limit,
+                'limit': 5,
                 'total_cases': total_cases,
                 'total_pages': (total_cases + limit - 1) // limit
             }

@@ -100,9 +100,9 @@ class Command(BaseCommand):
                             cited_opinion_id = int(cited_opinion_id.split('/')[-2])
                         
                         citation = data_processor.process_citation(
-                            source_opinion_id=citing_opinion_id,
-                            target_opinion_id=cited_opinion_id,
-                            citation_type='cites_to',
+                            citing_opinion_id=citing_opinion_id,
+                            cited_opinion_id=cited_opinion_id,
+                            depth=1
                         )
                         
                         if citation:
@@ -142,9 +142,9 @@ class Command(BaseCommand):
                     cited_opinion_id = int(cited_opinion_id.split('/')[-2])
                 
                 data_processor.process_citation(
-                    source_opinion_id=opinion_id,
-                    target_opinion_id=cited_opinion_id,
-                    citation_type='cites_to',
+                    citing_opinion_id=opinion_id,
+                    cited_opinion_id=cited_opinion_id,
+                    depth=1
                 )
                 count += 1
             except Exception as e:
@@ -160,9 +160,9 @@ class Command(BaseCommand):
                     citing_opinion_id = int(citing_opinion_id.split('/')[-2])
                 
                 data_processor.process_citation(
-                    source_opinion_id=citing_opinion_id,
-                    target_opinion_id=opinion_id,
-                    citation_type='cited_by',
+                    citing_opinion_id=citing_opinion_id,
+                    cited_opinion_id=opinion_id,
+                    depth=1
                 )
                 count += 1
             except Exception as e:
