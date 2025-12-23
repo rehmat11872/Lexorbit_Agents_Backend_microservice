@@ -91,14 +91,28 @@ class DataProcessor:
         
         # Extract education if available
         education = []
-        if 'educations' in data:
+        if 'educations' in data and isinstance(data.get('educations'), list):
             education = [
                 {
-                    'school': edu.get('school', {}).get('name', ''),
-                    'degree': edu.get('degree_level', ''),
+                    'school': edu.get('school', {}).get('name', '') if isinstance(edu.get('school'), dict) else str(edu.get('school', '')),
+                    'degree': str(edu.get('degree_level', '')),
                     'year': edu.get('degree_year'),
                 }
-                for edu in data.get('educations', [])
+                for edu in data.get('educations', []) if isinstance(edu, dict)
+            ]
+        
+        # Extract positions if available
+        positions = []
+        if 'positions' in data and isinstance(data['positions'], list):
+            positions = [
+                {
+                    'court': pos.get('court', {}).get('short_name', '') if isinstance(pos.get('court'), dict) else str(pos.get('court', '')),
+                    'position_type': str(pos.get('position_type', '')),
+                    'date_start': str(pos.get('date_start', '')),
+                    'date_termination': str(pos.get('date_termination', '')),
+                    'appointer': pos.get('appointer', {}).get('name_full', '') if isinstance(pos.get('appointer'), dict) else str(pos.get('appointer', '')),
+                }
+                for pos in data.get('positions', []) if isinstance(pos, dict)
             ]
         
         # Generate embedding for judge
@@ -119,6 +133,7 @@ class DataProcessor:
             'dob_state': data.get('dob_state', ''),
             'biography': data.get('bio', ''),
             'education': education,
+            'positions': positions,
         }
         
         if embedding:
@@ -130,7 +145,7 @@ class DataProcessor:
         )
         
         action = "Created" if created else "Updated"
-        logger.info(f"{action} judge: {judge.full_name}")
+        logger.info(f"{action} judge: {judge.full_name} (ID: {judge_id})")
         return judge
     
     @staticmethod
@@ -141,7 +156,12 @@ class DataProcessor:
         
         # Get or create court if not provided
         if not court and data.get('court'):
-            court_id = data['court'].split('/')[-2] if isinstance(data['court'], str) else data['court']
+            court_url = data['court']
+            if isinstance(court_url, str):
+                # Extract court ID from URL (handle both /id/ and /id formats)
+                court_id = court_url.rstrip('/').split('/')[-1]
+            else:
+                court_id = court_url
             try:
                 court = Court.objects.get(court_id=court_id)
             except Court.DoesNotExist:
@@ -194,6 +214,27 @@ class DataProcessor:
         
         action = "Created" if created else "Updated"
         logger.info(f"{action} docket: {docket.case_name_short}")
+        
+        # Create case outcome for analytics if case is terminated
+        if docket.date_terminated:
+            try:
+                # Determine outcome type based on available data
+                outcome_type = 'decided'  # Default
+                if 'disposition' in data:
+                    disposition = data['disposition'].lower()
+                    if any(word in disposition for word in ['grant', 'favor', 'win']):
+                        outcome_type = 'granted'
+                    elif any(word in disposition for word in ['deny', 'dismiss', 'reject']):
+                        outcome_type = 'denied'
+                
+                DataProcessor.process_case_outcome(
+                    docket=docket,
+                    outcome_type=outcome_type,
+                    disposition=data.get('disposition', ''),
+                    precedential_status=data.get('precedential_status', '')
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create case outcome for docket {docket_id}: {str(e)}")
         return docket
     
     @staticmethod
@@ -206,7 +247,10 @@ class DataProcessor:
         if not docket:
             docket_url = cluster_data.get('docket')
             if docket_url:
-                docket_id = docket_url.split('/')[-2] if isinstance(docket_url, str) else docket_url
+                if isinstance(docket_url, str):
+                    docket_id = docket_url.rstrip('/').split('/')[-1]
+                else:
+                    docket_id = docket_url
                 try:
                     docket = Docket.objects.get(docket_id=docket_id)
                 except Docket.DoesNotExist:
@@ -318,6 +362,18 @@ class DataProcessor:
                     opinion.joined_by.add(judge)
                 except Judge.DoesNotExist:
                     logger.warning(f"Judge {judge_id} not found for joined_by")
+        
+        # Create judge-docket relation for analytics
+        if author and cluster and cluster.docket:
+            try:
+                DataProcessor.process_judge_docket_relation(
+                    judge=author,
+                    docket=cluster.docket,
+                    role='author',
+                    outcome=''
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create judge-docket relation: {str(e)}")
         
         action = "Created" if created else "Updated"
         logger.info(f"{action} opinion: {opinion_id}")

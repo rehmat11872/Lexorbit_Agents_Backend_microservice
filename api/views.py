@@ -3,6 +3,7 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Count, Q, Avg, F, Sum, Case, When, IntegerField
 from datetime import datetime, timedelta
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 from court_data.models import (
     Court, Judge, Docket, OpinionCluster, Opinion, OpinionsCited,
-    JudgeDocketRelation, CaseOutcome, Statute
+    JudgeDocketRelation, CaseOutcome, Statute, Conversation, Message
 )
 from .serializers import (
     CourtSerializer, JudgeSerializer, JudgeListSerializer,
@@ -31,15 +32,16 @@ from .serializers import (
 
 
 class StandardResultsPagination(PageNumberPagination):
-    page_size = 20
+    page_size = 500
     page_size_query_param = 'page_size'
-    max_page_size = 100
+    max_page_size = 1000
 
 
 class CourtViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet for Court model"""
     queryset = Court.objects.all()
     serializer_class = CourtSerializer
+    pagination_class = StandardResultsPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['jurisdiction', 'court_type']
     search_fields = ['name', 'short_name']
@@ -50,6 +52,7 @@ class CourtViewSet(viewsets.ReadOnlyModelViewSet):
 class JudgeViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet for Judge model"""
     queryset = Judge.objects.all()
+    pagination_class = StandardResultsPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['gender', 'race']
     search_fields = ['full_name', 'name_last', 'name_first']
@@ -2223,3 +2226,104 @@ def case_prediction_advanced(request):
             'base_success_rate': round(base_success_rate, 1),
         },
     })
+
+
+# ===================================
+# Chat Views for Memory-Efficient Conversations
+# ===================================
+
+class ConversationListView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        conversations = Conversation.objects.filter(user=request.user)
+        return Response({
+            "conversations": [
+                {
+                    "id": conv.id,
+                    "title": conv.title or f"Conversation {conv.id}",
+                    "created_at": conv.created_at.isoformat(),
+                    "updated_at": conv.updated_at.isoformat(),
+                }
+                for conv in conversations
+            ]
+        })
+    
+    def post(self, request):
+        title = request.data.get("title", "")
+        conversation = Conversation.objects.create(user=request.user, title=title)
+        return Response({
+            "conversation_id": conversation.id,
+            "title": conversation.title
+        }, status=201)
+
+
+class ConversationDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, conversation_id):
+        try:
+            conversation = Conversation.objects.get(id=conversation_id, user=request.user)
+        except Conversation.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+        
+        messages = Message.objects.filter(conversation=conversation)
+        return Response({
+            "id": conversation.id,
+            "title": conversation.title,
+            "messages": [
+                {
+                    "role": msg.role,
+                    "content": msg.content,
+                    "created_at": msg.created_at.isoformat()
+                }
+                for msg in messages
+            ]
+        })
+    
+    def delete(self, request, conversation_id):
+        try:
+            conversation = Conversation.objects.get(id=conversation_id, user=request.user)
+            conversation.delete()
+            return Response({"status": "deleted"})
+        except Conversation.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+
+class ChatView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, conversation_id):
+        try:
+            conversation = Conversation.objects.get(id=conversation_id, user=request.user)
+        except Conversation.DoesNotExist:
+            return Response({"error": "Conversation not found"}, status=404)
+        
+        user_message = request.data.get("message", "").strip()
+        if not user_message:
+            return Response({"error": "Message is required"}, status=400)
+        
+        # Save user message
+        Message.objects.create(
+            conversation=conversation,
+            role="human",
+            content=user_message
+        )
+        
+        # Get AI response (simple for now)
+        ai_response = f"I received your message: {user_message}. This is a placeholder response."
+        
+        # Save AI response
+        Message.objects.create(
+            conversation=conversation,
+            role="ai",
+            content=ai_response
+        )
+        
+        # Update conversation timestamp
+        conversation.save()
+        
+        return Response({
+            "response": ai_response,
+            "conversation_id": conversation_id
+        })

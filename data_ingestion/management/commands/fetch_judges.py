@@ -25,8 +25,22 @@ class Command(BaseCommand):
             default=None,
             help='Filter judges by court',
         )
+        parser.add_argument(
+            '--force',
+            action='store_true',
+            help='Force fetch even if judges exist (will update existing)',
+        )
     
     def handle(self, *args, **options):
+        from django.db import connection
+        from court_data.models import Judge
+        
+        self.stdout.write(f'Database: {connection.settings_dict["NAME"]} on {connection.settings_dict["HOST"]}')
+        
+        # Get existing judge IDs to skip duplicates
+        existing_ids = set(Judge.objects.values_list('judge_id', flat=True))
+        self.stdout.write(f'Found {len(existing_ids)} existing judges in database')
+        
         max_results = options['max_results']
         filters = {}
         
@@ -40,14 +54,30 @@ class Command(BaseCommand):
             self.stdout.write(f'Filters: {filters}')
         
         count = 0
+        skipped = 0
         try:
-            for judge_data in courtlistener_service.fetch_judges(max_results=max_results, **filters):
+            # Try different approach - fetch judges from specific courts or with filters
+            if not filters.get('court'):
+                filters['court'] = 'ca9'  # 9th Circuit Court of Appeals
+            
+            for judge_data in courtlistener_service.fetch_judges(max_results=max_results*5, **filters):
                 try:
-                    data_processor.process_judge(judge_data)
-                    count += 1
+                    judge_id = judge_data.get('id') if isinstance(judge_data, dict) else None
+                    
+                    if not options['force'] and judge_id in existing_ids:
+                        skipped += 1
+                        continue  # Skip existing judges unless force is used
+                    
+                    result = data_processor.process_judge(judge_data)
+                    if result:
+                        count += 1
+                        self.stdout.write(f'NEW judge: {result.full_name} (ID: {result.judge_id})')
+                        
+                        if count >= max_results:
+                            break  # Stop when we have enough new judges
                     
                     if count % 10 == 0:
-                        self.stdout.write(f'Processed {count} judges...')
+                        self.stdout.write(f'Processed {count} new judges...')
                         
                 except Exception as e:
                     self.stdout.write(
@@ -55,7 +85,7 @@ class Command(BaseCommand):
                     )
             
             self.stdout.write(
-                self.style.SUCCESS(f'Successfully fetched and saved {count} judges')
+                self.style.SUCCESS(f'Successfully fetched {count} NEW judges (skipped {skipped} existing)')
             )
             
         except Exception as e:
