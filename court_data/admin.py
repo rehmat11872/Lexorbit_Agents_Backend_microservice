@@ -1,7 +1,7 @@
 from django.contrib import admin
 from .models import (
     Court, Judge, Docket, OpinionCluster, Opinion, OpinionsCited,
-    JudgeDocketRelation, CaseOutcome, Statute
+    JudgeDocketRelation
 )
 
 
@@ -21,8 +21,8 @@ class JudgeAdmin(admin.ModelAdmin):
 
 @admin.register(Docket)
 class DocketAdmin(admin.ModelAdmin):
-    list_display = ['docket_id', 'case_name_short', 'court', 'date_filed', 'nature_of_suit']
-    list_filter = ['court', 'nature_of_suit', 'date_filed']
+    list_display = ['docket_id', 'case_name_short', 'court', 'date_filed', 'nature_of_suit', 'outcome_status']
+    list_filter = ['court', 'nature_of_suit', 'date_filed', 'outcome_status']
     search_fields = ['case_name', 'docket_number']
     date_hierarchy = 'date_filed'
 
@@ -55,17 +55,3 @@ class JudgeDocketRelationAdmin(admin.ModelAdmin):
     list_display = ['judge', 'docket', 'role', 'outcome']
     list_filter = ['role', 'outcome']
     search_fields = ['judge__full_name', 'docket__case_name']
-
-
-@admin.register(CaseOutcome)
-class CaseOutcomeAdmin(admin.ModelAdmin):
-    list_display = ['docket', 'outcome_type', 'decision_days', 'precedential_status']
-    list_filter = ['outcome_type', 'precedential_status']
-    search_fields = ['docket__case_name']
-
-
-@admin.register(Statute)
-class StatuteAdmin(admin.ModelAdmin):
-    list_display = ['statute_id', 'title', 'section', 'jurisdiction', 'is_active']
-    list_filter = ['jurisdiction', 'jurisdiction_type', 'is_active']
-    search_fields = ['title', 'section', 'text']

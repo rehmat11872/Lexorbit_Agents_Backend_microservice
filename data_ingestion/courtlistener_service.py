@@ -132,6 +132,12 @@ class CourtListenerAPIService:
         params = {'person': judge_id}
         return list(self._paginate('positions', params=params))
     
+    def fetch_judge_educations(self, judge_id: int) -> List[Dict]:
+        """Fetch all education records for a judge"""
+        logger.info(f"Fetching education for judge: {judge_id}")
+        params = {'person': judge_id}
+        return list(self._paginate('educations', params=params))
+    
     # ============================================
     # Docket (Case) Methods
     # ============================================
@@ -307,12 +313,16 @@ class CourtListenerAPIService:
         # Get judge positions
         positions = self.fetch_judge_positions(judge_id)
         
+        # Get judge educations
+        educations = self.fetch_judge_educations(judge_id)
+        
         # Get opinions authored by this judge
         opinions = list(self._paginate('opinions', params={'author': judge_id}, max_results=max_cases))
         
         return {
             'judge': judge_data,
             'positions': positions,
+            'educations': educations,
             'opinions': opinions,
             'total_opinions': len(opinions),
         }

@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from court_data.models import (
     Court, Judge, Docket, OpinionCluster, Opinion, OpinionsCited,
-    JudgeDocketRelation, CaseOutcome, Statute
+    JudgeDocketRelation, Statute
 )
 
 
@@ -29,15 +29,43 @@ class JudgeSerializer(serializers.ModelSerializer):
 
 
 class JudgeListSerializer(serializers.ModelSerializer):
-    """Lightweight serializer for judge lists"""
-    total_opinions = serializers.SerializerMethodField()
-    
+    """Lightweight serializer for judge search list with analytics summary"""
+    court_name = serializers.CharField(source='authored_opinions.first.cluster.docket.court.name', read_only=True, default="Unknown Court")
+    specialty = serializers.SerializerMethodField()
+    grant_rate = serializers.SerializerMethodField()
+    total_cases = serializers.SerializerMethodField()
+    avg_decision_time = serializers.SerializerMethodField()
+    recent_cases_count = serializers.SerializerMethodField()
+
     class Meta:
         model = Judge
-        fields = ['id', 'judge_id', 'full_name', 'gender', 'biography', 'total_opinions', 'created_at']
-    
-    def get_total_opinions(self, obj):
-        return obj.authored_opinions.count()
+        fields = [
+            'id', 'judge_id', 'full_name', 'court_name', 'specialty', 
+            'grant_rate', 'total_cases', 'avg_decision_time', 'recent_cases_count'
+        ]
+
+    def get_specialty(self, obj):
+        # Most frequent nature of suit
+        from django.db.models import Count
+        nature = obj.docket_relations.values('docket__nature_of_suit').annotate(count=Count('id')).order_by('-count').first()
+        return nature['docket__nature_of_suit'] if nature and nature['docket__nature_of_suit'] else "General Law"
+
+    def get_grant_rate(self, obj):
+        total = obj.docket_relations.exclude(outcome='').count()
+        if total == 0: return 50.0  # Default or null
+        granted = obj.docket_relations.filter(outcome__icontains='grant').count()
+        return round((granted / total) * 100, 1)
+
+    def get_total_cases(self, obj):
+        return obj.docket_relations.count()
+
+    def get_avg_decision_time(self, obj):
+        from django.db.models import Avg
+        avg = obj.docket_relations.filter(docket__decision_days__isnull=False).aggregate(Avg('docket__decision_days'))['docket__decision_days__avg']
+        return round(avg, 1) if avg else 0
+
+    def get_recent_cases_count(self, obj):
+        return obj.authored_opinions.count() # Simplified
 
 
 class DocketSerializer(serializers.ModelSerializer):
@@ -45,14 +73,14 @@ class DocketSerializer(serializers.ModelSerializer):
     court_name = serializers.CharField(source='court.name', read_only=True)
     opinions_count = serializers.SerializerMethodField()
     judges = serializers.SerializerMethodField()
-    outcome = serializers.SerializerMethodField()
+    precedent_value = serializers.SerializerMethodField()
     
     class Meta:
         model = Docket
         fields = '__all__'
     
     def get_opinions_count(self, obj):
-        return obj.opinions.count()
+        return Opinion.objects.filter(cluster__docket=obj).count()
     
     def get_judges(self, obj):
         relations = obj.judge_relations.select_related('judge').all()
@@ -61,12 +89,13 @@ class DocketSerializer(serializers.ModelSerializer):
             'name': rel.judge.full_name,
             'role': rel.role,
         } for rel in relations]
-    
-    def get_outcome(self, obj):
-        try:
-            return CaseOutcomeSerializer(obj.outcome).data
-        except CaseOutcome.DoesNotExist:
-            return None
+
+    def get_precedent_value(self, obj):
+        # Calculate based on total citations received by opinions in this docket
+        count = OpinionsCited.objects.filter(cited_opinion__cluster__docket=obj).count()
+        if count > 50: return "High"
+        if count > 10: return "Medium"
+        return "Low"
 
 
 class DocketListSerializer(serializers.ModelSerializer):
@@ -76,7 +105,7 @@ class DocketListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Docket
         fields = ['id', 'docket_id', 'case_name', 'case_name_short', 'court_name', 
-                  'date_filed', 'nature_of_suit', 'created_at']
+                  'date_filed', 'nature_of_suit', 'outcome_status', 'created_at']
 
 
 class OpinionClusterSerializer(serializers.ModelSerializer):
@@ -160,49 +189,79 @@ class JudgeDocketRelationSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
-class CaseOutcomeSerializer(serializers.ModelSerializer):
-    """Serializer for Case Outcomes"""
-    case_name = serializers.CharField(source='docket.case_name_short', read_only=True)
-    
-    class Meta:
-        model = CaseOutcome
-        fields = '__all__'
-
-
 class StatuteSerializer(serializers.ModelSerializer):
-    """Serializer for Statutes"""
-    related_cases_count = serializers.SerializerMethodField()
-    
+    """Serializer for Statute model"""
     class Meta:
         model = Statute
         fields = '__all__'
-    
-    def get_related_cases_count(self, obj):
-        return obj.related_opinions.count()
 
 
-class JudgeAnalyticsSerializer(serializers.Serializer):
-    """Serializer for judge analytics data"""
-    judge_id = serializers.IntegerField()
-    judge_name = serializers.CharField()
+class RulingPatternSerializer(serializers.Serializer):
+    factor = serializers.CharField()
+    lift = serializers.CharField()
+    example = serializers.CharField()
+
+class TimePatternSerializer(serializers.Serializer):
+    window = serializers.CharField()
+    percentage = serializers.IntegerField()
+
+class JudgeProfileSerializer(serializers.Serializer):
+    overview = serializers.DictField()
+    analytics = serializers.DictField()
+    patterns = serializers.ListField(child=RulingPatternSerializer())
+    insights = serializers.ListField(child=TimePatternSerializer())
+    distribution = serializers.ListField(child=serializers.DictField())
+
+class CaseHistoryItemSerializer(serializers.Serializer):
+    case_name = serializers.CharField()
+    case_number = serializers.CharField()
+    description = serializers.CharField()
+    date_filed = serializers.CharField()
+    date_decided = serializers.CharField()
+    duration = serializers.IntegerField()
+    amount = serializers.FloatField()
+    outcome = serializers.CharField()
+    case_type = serializers.CharField()
+    plaintiff = serializers.CharField()
+    defendant = serializers.CharField()
+    precedent_value = serializers.CharField()
+    status = serializers.CharField()
+
+class CaseHistorySerializer(serializers.Serializer):
     total_cases = serializers.IntegerField()
-    grant_rate = serializers.FloatField()
-    deny_rate = serializers.FloatField()
-    average_decision_days = serializers.FloatField()
-    recent_cases = serializers.ListField(child=serializers.DictField())
-    case_type_breakdown = serializers.DictField()
-    yearly_activity = serializers.ListField(child=serializers.DictField())
+    closed_cases = serializers.IntegerField()
+    active_cases = serializers.IntegerField()
+    avg_decision_time = serializers.FloatField()
+    cases = serializers.ListField(child=CaseHistoryItemSerializer())
 
+
+class ContributingFactorSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    weight = serializers.CharField(required=False)
+    value = serializers.CharField(required=False)
+    sentiment = serializers.CharField(required=False) # For General Prediction
 
 class CasePredictionSerializer(serializers.Serializer):
-    """Serializer for case prediction data"""
-    case_id = serializers.IntegerField()
-    case_name = serializers.CharField()
-    predicted_outcome = serializers.CharField()
-    success_probability = serializers.FloatField()
-    factors = serializers.ListField(child=serializers.DictField())
-    similar_cases = serializers.ListField(child=serializers.DictField())
+    """Serializer for judge-specific case prediction"""
+    success_probability = serializers.IntegerField()
+    confidence_level = serializers.CharField()
+    estimated_decision_time = serializers.CharField()
+    contributing_factors = serializers.ListField(child=ContributingFactorSerializer())
+    strategic_recommendations = serializers.ListField(child=serializers.CharField())
 
+class GeneralCasePredictionSerializer(serializers.Serializer):
+    """Serializer for general case analysis and prediction"""
+    success_probability = serializers.IntegerField()
+    confidence_level = serializers.CharField()
+    outcome_breakdown = serializers.DictField() # {favorable: 73, uncertain: 17, unfavorable: 10}
+    contributing_factors = serializers.ListField(child=ContributingFactorSerializer())
+
+class CaseTypeAnalysisSerializer(serializers.Serializer):
+    """Serializer for aggregate case type success rates"""
+    category = serializers.CharField()
+    total_cases = serializers.IntegerField()
+    granted_percentage = serializers.IntegerField()
+    denied_percentage = serializers.IntegerField()
 
 class SearchQuerySerializer(serializers.Serializer):
     """Serializer for search queries"""
@@ -220,15 +279,12 @@ class LegalResearchQuerySerializer(serializers.Serializer):
     jurisdiction = serializers.CharField(required=False, allow_blank=True)
     case_type = serializers.CharField(required=False, allow_blank=True)
     date_range = serializers.CharField(required=False, allow_blank=True)
-    include_statutes = serializers.BooleanField(default=True)
 
 
 class LegalResearchResponseSerializer(serializers.Serializer):
     """Serializer for legal research responses"""
-    query = serializers.CharField()
+    question = serializers.CharField()
     summary = serializers.CharField()
-    key_authorities = serializers.ListField(child=serializers.DictField())
+    key_authorities = serializers.ListField(child=serializers.CharField())
     analysis = serializers.CharField()
-    citations = serializers.ListField(child=serializers.DictField())
-    related_statutes = serializers.ListField(child=serializers.DictField())
-
+    citations = serializers.ListField(child=serializers.CharField())

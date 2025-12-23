@@ -1,0 +1,51 @@
+/Users/paras/Desktop/TK/Agent_ETL_Pipeline/venv/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+
+============================================================
+RUNNING TEST: Research WITHOUT Filters
+============================================================
+Status: SUCCESS (10.51s)
+
+[SUMMARY]
+The burden of proof in employment discrimination cases under Title VII requires the plaintiff to first establish a prima facie case of discrimination. If successful, the burden then shifts to the employer to articulate a legitimate, non-discriminatory reason for the adverse employment action. Should the employer provide such a reason, the burden shifts back to the plaintiff to prove that the employer's reason is a pretext for discrimination.
+
+[KEY AUTHORITIES]
+• Vector Transportation Co. v. Mississippi Department of Employment Security and Scott Black, Opinion ID: 11096386, Court of Appeals of Mississippi
+• Brinda Patterson v. Mississippi Department of Employment Security and The Golden Manufacturing Company, Opinion ID: 11096418, Court of Appeals of Mississippi
+• Handyman House Techs, LLC v. Mississippi Department of Employment Security, Opinion ID: 11096324, Court of Appeals of Mississippi
+• Kennedy, Sec. of H&HS v. Braidwood Mgmt., Inc., Opinion ID: 11085140, Supreme Court of the United States
+• Danny Wheeler v. Mississippi Limestone Corporation and The Phoenix Insurance Company, Opinion ID: 11096315, Court of Appeals of Mississippi
+
+[ANALYSIS]
+In employment discrimination litigation under Title VII of the Civil Rights Act of 1964, the legal framework for the burden of proof is well-established through a tripartite process. Initially, the plaintiff must establish a prima facie case of discrimination by showing that they belong to a protected class, they were qualified for the position or performing their job satisfactorily, they suffered an adverse employment action, and the circumstances suggest a discriminatory motive. This initial burden is not onerous but requires sufficient evidence to raise an inference of discrimination.
+
+Once a prima facie case is established, the burden of production shifts to the employer to articulate a legitimate, non-discriminatory reason for the adverse employment action. This does not shift the burden of proof from the plaintiff but requires the employer to provide evidence of a rationale that, if believed, would support the conclusion that the action was not discriminatory. The employer's burden at this stage is one of production, not persuasion, and does not require the employer to prove the absence of discriminatory motive.
+
+If the employer meets this burden, the final phase requires the plaintiff to prove that the employer's stated reason was not the true reason for the employment decision but was instead a pretext for discrimination. This can be achieved by showing that the employer's explanation is unworthy of credence or by presenting other evidence of discriminatory motive. The ultimate burden of persuasion remains at all times with the plaintiff. This framework ensures a fair and equitable process for both parties, allowing for the thorough examination of the facts and motivations behind employment decisions.
+
+[CITATIONS]
+• Opinion ID: 11096386
+• Opinion ID: 11096418
+• Opinion ID: 11096324
+• Opinion ID: 11085140
+• Opinion ID: 11096315
+
+============================================================
+RUNNING TEST: Research WITH Advanced Filters (Federal Supreme)
+============================================================
+Status: SUCCESS (11.00s)
+
+[SUMMARY]
+Under Title VII of the Civil Rights Act of 1964, the burden of proof in discrimination cases initially lies with the plaintiff to establish a prima facie case of discrimination. If the plaintiff succeeds, the burden shifts to the employer to articulate a legitimate, non-discriminatory reason for the adverse employment action. If the employer provides such a reason, the burden shifts back to the plaintiff to prove that the employer's reason is a pretext for discrimination.
+
+[KEY AUTHORITIES]
+No authorities found (check if DB has ingested opinions).
+
+[ANALYSIS]
+In the context of Title VII, the legal framework for addressing claims of discrimination involves a three-step, burden-shifting analysis. Initially, the plaintiff bears the burden of establishing a prima facie case of discrimination. This requires showing that the plaintiff belongs to a protected class, suffered an adverse employment action, and that the action occurred under circumstances giving rise to an inference of unlawful discrimination. This framework, established by the Supreme Court in McDonnell Douglas Corp. v. Green, 411 U.S. 792 (1973), is designed to facilitate the presentation of evidence when direct evidence of discrimination is unavailable.
+
+Once the plaintiff establishes a prima facie case, the burden of production shifts to the defendant employer to articulate a legitimate, non-discriminatory reason for the adverse employment action. This does not shift the burden of proof itself but requires the employer to provide evidence that, if believed, would support a finding that unlawful discrimination was not the cause of the employment action. The employer's burden at this stage is one of production, not persuasion, and does not require the employer to prove that it was actually motivated by the proffered reasons.
+
+If the employer succeeds in this, the burden shifts back to the plaintiff to demonstrate that the employer's stated reason was not the true reason for the employment decision but was instead a pretext for discrimination. The plaintiff can satisfy this burden either directly, by persuading the court that a discriminatory reason more likely motivated the employer, or indirectly, by showing that the employer's explanation is unworthy of credence. This final step underscores the principle that the ultimate burden of persuasion regarding the issue of discrimination remains at all times with the plaintiff. The shifting burdens of production and the requirement of articulating specific reasons are tools designed to sharpen the inquiry into the elusive factual question of intentional discrimination.
+
+[CITATIONS]

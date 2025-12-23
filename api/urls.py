@@ -7,10 +7,12 @@ from rest_framework_simplejwt.views import (
 
 from .views import (
     CourtViewSet, JudgeViewSet, DocketViewSet,
-    OpinionViewSet, OpinionsCitedViewSet, StatuteViewSet,
-    legal_research_query, case_prediction, semantic_search, statistics,
-    legal_research_advanced, judge_case_history, citation_network,
-    most_influential_cases, case_prediction_advanced
+    OpinionViewSet, OpinionsCitedViewSet,
+    legal_research_query, case_prediction, semantic_search,
+    legal_research_advanced, statistics, citation_network,
+    most_influential_cases, judge_details_profile,
+    judge_case_history_v2, judge_prediction_view,
+    general_case_prediction, case_type_analysis_view
 )
 
 # Create router and register viewsets
@@ -20,12 +22,8 @@ router.register(r'judges', JudgeViewSet, basename='judge')
 router.register(r'cases', DocketViewSet, basename='case')
 router.register(r'opinions', OpinionViewSet, basename='opinion')
 router.register(r'citations', OpinionsCitedViewSet, basename='citation')
-router.register(r'statutes', StatuteViewSet, basename='statute')
 
 urlpatterns = [
-    # Router URLs
-    path('', include(router.urls)),
-    
     # JWT Authentication
     path('auth/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
@@ -35,14 +33,23 @@ urlpatterns = [
     path('agents/case-prediction/', case_prediction, name='case_prediction'),
     path('agents/semantic-search/', semantic_search, name='semantic_search'),
     
+    # Enhanced Judge Analytics Endpoints
+    path('judges/<int:judge_id>/profile/', judge_details_profile, name='judge_profile'),
+    path('judges/<int:judge_id>/case-history/', judge_case_history_v2, name='judge_case_history'),
+    path('judges/<int:judge_id>/predict/', judge_prediction_view, name='judge_predict'),
+    
+    # General Case Analysis
+    path('cases/predict/', general_case_prediction, name='general_case_prediction'),
+    path('cases/type-analysis/', case_type_analysis_view, name='case_type_analysis'),
+    
     # Enhanced Frontend Endpoints
     path('legal-research-advanced/', legal_research_advanced, name='legal_research_advanced'),
-    path('judges/<int:judge_id>/case-history/', judge_case_history, name='judge_case_history'),
     path('citation-network/<int:opinion_id>/', citation_network, name='citation_network'),
     path('cases/most-influential/', most_influential_cases, name='most_influential_cases'),
-    path('case-prediction-advanced/', case_prediction_advanced, name='case_prediction_advanced'),
     
     # Statistics
     path('statistics/', statistics, name='statistics'),
-]
 
+    # Router URLs (Keep at the bottom to avoid shadowing)
+    path('', include(router.urls)),
+]

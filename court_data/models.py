@@ -41,6 +41,7 @@ class Judge(models.Model):
     name_last = models.CharField(max_length=200, blank=True)
     name_suffix = models.CharField(max_length=50, blank=True)
     full_name = models.CharField(max_length=500, db_index=True)
+    fjc_id = models.IntegerField(null=True, blank=True, db_index=True)
     
     # Biography
     date_birth = models.DateField(null=True, blank=True)
@@ -51,7 +52,7 @@ class Judge(models.Model):
     dob_state = models.CharField(max_length=100, blank=True)
     biography = models.TextField(blank=True)
     
-    # Education & Positions (JSON from /educations/ and /positions/ APIs)
+    # Education & Positions
     education = models.JSONField(default=list, blank=True)
     positions = models.JSONField(default=list, blank=True)
     
@@ -88,7 +89,13 @@ class Docket(models.Model):
     date_terminated = models.DateField(null=True, blank=True)
     date_last_filing = models.DateField(null=True, blank=True)
     
-    # Case type (Civil/Criminal)
+    # Analytics / Outcome fields
+    outcome_status = models.CharField(max_length=100, blank=True, db_index=True) # Result: Granted, Denied, Affirmed
+    monetary_amount = models.DecimalField(max_digits=20, decimal_places=2, null=True, blank=True)
+    decision_days = models.IntegerField(null=True, blank=True)
+    precedential_status = models.CharField(max_length=100, blank=True)
+    
+    # Case type details
     nature_of_suit = models.CharField(max_length=500, blank=True, db_index=True)
     cause = models.CharField(max_length=500, blank=True)
     jury_demand = models.CharField(max_length=200, blank=True)
@@ -188,7 +195,7 @@ class Opinion(models.Model):
     # Citations extracted
     extracted_citations = models.JSONField(default=list, blank=True)
     
-    # Embedding for semantic search (CRITICAL!)
+    # Embedding for semantic search
     embedding = VectorField(dimensions=1536, null=True, blank=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
@@ -228,19 +235,10 @@ class OpinionsCited(models.Model):
 
 
 class JudgeDocketRelation(models.Model):
-    """Judge-Case relationship for analytics"""
-    ROLE_CHOICES = [
-        ('author', 'Author'),
-        ('joined', 'Joined'),
-        ('dissent', 'Dissent'),
-        ('concurrence', 'Concurrence'),
-        ('presiding', 'Presiding Judge'),
-        ('panel', 'Panel Member'),
-    ]
-    
+    """Judge-Case relationship for performance-indexed analytics"""
     judge = models.ForeignKey(Judge, on_delete=models.CASCADE, related_name='docket_relations')
     docket = models.ForeignKey(Docket, on_delete=models.CASCADE, related_name='judge_relations')
-    role = models.CharField(max_length=50, choices=ROLE_CHOICES, blank=True)
+    role = models.CharField(max_length=50, blank=True)
     outcome = models.CharField(max_length=100, blank=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
@@ -256,62 +254,28 @@ class JudgeDocketRelation(models.Model):
         return f"{self.judge.full_name} - {self.role}"
 
 
-class CaseOutcome(models.Model):
-    """Case outcome for predictions"""
-    OUTCOME_TYPES = [
-        ('granted', 'Granted'),
-        ('denied', 'Denied'),
-        ('affirmed', 'Affirmed'),
-        ('reversed', 'Reversed'),
-        ('remanded', 'Remanded'),
-        ('dismissed', 'Dismissed'),
-        ('settled', 'Settled'),
-        ('vacated', 'Vacated'),
-        ('other', 'Other'),
-    ]
-    
-    docket = models.OneToOneField(Docket, on_delete=models.CASCADE, related_name='outcome')
-    outcome_type = models.CharField(max_length=50, choices=OUTCOME_TYPES)
-    decision_days = models.IntegerField(null=True, blank=True)
-    disposition = models.TextField(blank=True)
-    precedential_status = models.CharField(max_length=100, blank=True)
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        db_table = 'case_outcomes'
-        indexes = [
-            models.Index(fields=['outcome_type']),
-        ]
-    
-    def __str__(self):
-        return f"{self.docket.case_name_short} - {self.outcome_type}"
-
-
 class Statute(models.Model):
-    """Statutes and legal codes"""
-    statute_id = models.CharField(max_length=200, unique=True, db_index=True)
+    """Placeholder for verified statutes mentioned in case law"""
+    statute_id = models.CharField(max_length=100, unique=True, db_index=True)
     title = models.CharField(max_length=500)
-    section = models.CharField(max_length=200, blank=True)
-    text = models.TextField()
-    jurisdiction = models.CharField(max_length=100)
-    jurisdiction_type = models.CharField(max_length=50)
-    effective_date = models.DateField(null=True, blank=True)
-    repeal_date = models.DateField(null=True, blank=True)
+    section = models.CharField(max_length=100, blank=True)
+    text = models.TextField(blank=True)
+    jurisdiction = models.CharField(max_length=100, blank=True)
+    jurisdiction_type = models.CharField(max_length=100, blank=True)  # Federal, State
     is_active = models.BooleanField(default=True)
+    
+    # Related cases (ManyToMany through extracted text references)
     related_opinions = models.ManyToManyField(Opinion, blank=True, related_name='cited_statutes')
-    embedding = VectorField(dimensions=1536, null=True, blank=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
         db_table = 'statutes'
-        ordering = ['title', 'section']
         indexes = [
-            models.Index(fields=['jurisdiction']),
+            models.Index(fields=['statute_id']),
+            models.Index(fields=['title']),
         ]
     
     def __str__(self):
-        return f"{self.title} § {self.section}"
+        return f"{self.title} {self.section}"

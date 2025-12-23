@@ -1,11 +1,13 @@
 from datetime import datetime
 from typing import Dict, List, Optional
 import logging
+import re
+from decimal import Decimal
 from django.db import transaction
 from django.conf import settings
 from court_data.models import (
     Court, Judge, Docket, OpinionCluster, Opinion, OpinionsCited, 
-    JudgeDocketRelation, CaseOutcome, Statute
+    JudgeDocketRelation
 )
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,23 @@ class DataProcessor:
             return datetime.strptime(date_str, '%Y-%m-%d').date()
         except (ValueError, TypeError):
             return None
+
+    @staticmethod
+    def extract_monetary_amount(text: str) -> Optional[Decimal]:
+        """Extract dollar amount from text (e.g. '$2,500,000.00')"""
+        if not text:
+            return None
+        
+        # Regex for currency pattern
+        matches = re.findall(r'\$\s?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)', text)
+        if matches:
+            try:
+                # Use the first/largest match
+                clean_amount = matches[0].replace(',', '')
+                return Decimal(clean_amount)
+            except:
+                pass
+        return None
     
     @staticmethod
     @transaction.atomic
@@ -61,7 +80,7 @@ class DataProcessor:
         court, created = Court.objects.update_or_create(
             court_id=court_id,
             defaults={
-                'name': data.get('full_name', ''),
+                'name': data.get('full_name', '') or data.get('name', ''),
                 'short_name': data.get('short_name', ''),
                 'jurisdiction': data.get('jurisdiction', ''),
                 'court_type': data.get('position', ''),
@@ -75,9 +94,81 @@ class DataProcessor:
         return court
     
     @staticmethod
+    def generate_synthetic_bio(name: str, educations: List[Dict], positions: List[Dict], gender: str = '') -> str:
+        """Generate a biography from available structured data when bio is missing"""
+        
+        # Gender-aware pronouns
+        if gender and gender.lower() in ['m', 'male']:
+            pronoun = 'He'
+            pronoun_obj = 'his'
+        elif gender and gender.lower() in ['f', 'female']:
+            pronoun = 'She'
+            pronoun_obj = 'her'
+        else:
+            pronoun = 'They'
+            pronoun_obj = 'their'
+        
+        parts = [f"{name} is a judicial officer."]
+        
+        # Position type expansion map
+        pos_map = {
+            'jud': 'Judge',
+            'jus': 'Justice',
+            'chj': 'Chief Judge',
+            'mag': 'Magistrate',
+            'scj': 'Senior Circuit Judge',
+            'sdj': 'Senior District Judge',
+            'pro': 'Prosecutor',
+            'att': 'Attorney',
+        }
+        
+        # Education (deduplicate by normalized school name)
+        if educations:
+            seen_schools = set()
+            edu_strings = []
+            for edu in educations:
+                school = edu.get('school') or edu.get('school_name')
+                if school:
+                    # Normalize for dedup check
+                    norm_school = school.lower().replace(' school of law', ' law school').replace('yale college', 'yale university')
+                    degree = (edu.get('degree') or edu.get('degree_level') or 'Degree').upper()
+                    year = edu.get('year') or edu.get('degree_year')
+                    key = f"{norm_school}|{degree}"
+                    if key not in seen_schools:
+                        seen_schools.add(key)
+                        year_str = f" ({year})" if year else ""
+                        edu_strings.append(f"{degree} from {school}{year_str}")
+            if edu_strings:
+                parts.append(f"Education: {'; '.join(edu_strings)}.")
+        
+        # Current positions (exclude empty courts)
+        current = [p for p in positions if not p.get('date_termination') and p.get('court')]
+        if current:
+            current_parts = []
+            for pos in current:
+                court = pos.get('court')
+                pos_code = (pos.get('position_type') or '').lower()
+                pos_type = pos_map.get(pos_code, pos_code.capitalize() or 'Judge')
+                start = pos.get('date_start', '')
+                if start:
+                    current_parts.append(f"serves as {pos_type} at {court} (since {start})")
+                else:
+                    current_parts.append(f"serves as {pos_type} at {court}")
+            
+            if current_parts:
+                parts.append(f"{pronoun} currently {', and '.join(current_parts)}.")
+        
+        # Past judicial positions (only count those with actual court assignments)
+        past = [p for p in positions if p.get('date_termination') and p.get('court')]
+        if past:
+            parts.append(f"{pronoun} previously held {len(past)} other judicial position(s).")
+        
+        return ' '.join(parts) if len(parts) > 1 else f"{name} is a judicial officer with the court system."
+
+    @staticmethod
     @transaction.atomic
-    def process_judge(data: Dict) -> Judge:
-        """Process and save judge data"""
+    def process_judge(data: Dict, positions: Optional[List[Dict]] = None) -> Judge:
+        """Process and save judge data with synthetic bio fallback"""
         judge_id = data.get('id')
         
         # Build full name
@@ -89,20 +180,45 @@ class DataProcessor:
         ]
         full_name = ' '.join(filter(None, name_parts))
         
-        # Extract education if available
-        education = []
-        if 'educations' in data:
-            education = [
-                {
-                    'school': edu.get('school', {}).get('name', ''),
-                    'degree': edu.get('degree_level', ''),
-                    'year': edu.get('degree_year'),
-                }
-                for edu in data.get('educations', [])
-            ]
+        # Extract education (v4 API nests this)
+        education_list = []
+        for edu in data.get('educations', []):
+            school_data = edu.get('school', {})
+            if isinstance(school_data, dict):
+                school_name = school_data.get('name', '')
+            else:
+                school_name = str(school_data) if school_data else ''
+            
+            education_list.append({
+                'school': school_name,
+                'degree_level': edu.get('degree_level', ''),
+                'degree_year': edu.get('degree_year'),
+            })
+        
+        # Format positions
+        position_list = []
+        for pos in (positions or data.get('positions', [])):
+            court_data = pos.get('court', {})
+            if isinstance(court_data, dict):
+                court_name = court_data.get('full_name', '') or court_data.get('short_name', '')
+            else:
+                court_name = str(court_data) if court_data else ''
+            
+            position_list.append({
+                'position_type': pos.get('position_type', ''),
+                'court': court_name,
+                'date_start': pos.get('date_start', ''),
+                'date_termination': pos.get('date_termination'),
+            })
+        
+        # Check for provided bio or generate one
+        bio = data.get('biography') or data.get('bio') or data.get('description') or ''
+        gender = data.get('gender', '')
+        if not bio:
+            bio = DataProcessor.generate_synthetic_bio(full_name, education_list, position_list, gender)
         
         # Generate embedding for judge
-        bio_text = f"{full_name}. {data.get('bio', '')}"
+        bio_text = f"{full_name}. {bio}"
         embedding = generate_embedding(bio_text)
         
         defaults_dict = {
@@ -111,14 +227,16 @@ class DataProcessor:
             'name_last': data.get('name_last', ''),
             'name_suffix': data.get('name_suffix', ''),
             'full_name': full_name,
+            'fjc_id': data.get('fjc_id'),
             'date_birth': DataProcessor.parse_date(data.get('date_dob')),
             'date_death': DataProcessor.parse_date(data.get('date_dod')),
             'gender': data.get('gender', ''),
             'race': ', '.join(data.get('race', [])) if isinstance(data.get('race'), list) else data.get('race', ''),
             'dob_city': data.get('dob_city', ''),
             'dob_state': data.get('dob_state', ''),
-            'biography': data.get('bio', ''),
-            'education': education,
+            'biography': bio,
+            'education': education_list,
+            'positions': position_list,
         }
         
         if embedding:
@@ -130,7 +248,7 @@ class DataProcessor:
         )
         
         action = "Created" if created else "Updated"
-        logger.info(f"{action} judge: {judge.full_name}")
+        logger.info(f"{action} judge: {judge.full_name} (FJC ID: {judge.fjc_id})")
         return judge
     
     @staticmethod
@@ -145,8 +263,15 @@ class DataProcessor:
             try:
                 court = Court.objects.get(court_id=court_id)
             except Court.DoesNotExist:
-                logger.warning(f"Court {court_id} not found, skipping docket {docket_id}")
-                return None
+                # Proactively fetch court if missing
+                try:
+                    from data_ingestion.courtlistener_service import courtlistener_service
+                    logger.info(f"Court {court_id} missing for docket {docket_id}. Fetching...")
+                    court_data = courtlistener_service.fetch_court_by_id(court_id)
+                    court = DataProcessor.process_court(court_data)
+                except Exception as e:
+                    logger.warning(f"Court {court_id} not found and could not be fetched: {str(e)}")
+                    return None
         
         if not court:
             logger.warning(f"No court for docket {docket_id}, skipping")
@@ -163,25 +288,43 @@ class DataProcessor:
                 for party in data.get('parties', [])
             ]
         
+        # Calculate decision days if possible
+        filed = DataProcessor.parse_date(data.get('date_filed'))
+        terminated = DataProcessor.parse_date(data.get('date_terminated'))
+        decision_days = None
+        if filed and terminated:
+            decision_days = (terminated - filed).days
+
+        # Extract monetary amount from suit details or snippet if available
+        nature = data.get('nature_of_suit', '')
+        amount = DataProcessor.extract_monetary_amount(nature)
+        
+        # Fallback for case_name_short
+        case_name_short = data.get('case_name_short', '') or data.get('case_name', '')
+        if case_name_short and len(case_name_short) > 255:
+            case_name_short = case_name_short[:252] + '...'
+            
         # Generate embedding for docket
-        case_text = f"{data.get('case_name', '')}. {data.get('nature_of_suit', '')}"
+        case_text = f"{data.get('case_name', '')}. {nature}"
         embedding = generate_embedding(case_text)
         
         defaults_dict = {
             'court': court,
             'case_name': data.get('case_name', ''),
-            'case_name_short': data.get('case_name_short', ''),
+            'case_name_short': case_name_short,
             'case_name_full': data.get('case_name_full', ''),
             'docket_number': data.get('docket_number', ''),
-            'date_filed': DataProcessor.parse_date(data.get('date_filed')),
-            'date_terminated': DataProcessor.parse_date(data.get('date_terminated')),
+            'date_filed': filed,
+            'date_terminated': terminated,
             'date_last_filing': DataProcessor.parse_date(data.get('date_last_filing')),
-            'nature_of_suit': data.get('nature_of_suit', ''),
+            'nature_of_suit': nature,
             'cause': data.get('cause', ''),
             'jury_demand': data.get('jury_demand', ''),
             'jurisdiction_type': data.get('jurisdiction_type', ''),
             'parties': parties,
             'pacer_case_id': data.get('pacer_case_id', ''),
+            'monetary_amount': amount,
+            'decision_days': decision_days,
         }
         
         if embedding:
@@ -217,12 +360,36 @@ class DataProcessor:
             logger.warning(f"No docket provided for cluster {cluster_id}")
             return None
         
+        # ENHANCED: Update docket details from cluster metadata if missing
+        disposition = cluster_data.get('disposition', '')
+        cluster_date = DataProcessor.parse_date(cluster_data.get('date_filed'))
+        precedential = cluster_data.get('precedential_status', '')
+        
+        update_docket = False
+        if disposition and not docket.outcome_status:
+            docket.outcome_status = disposition[:100]
+            update_docket = True
+        
+        if cluster_date and not docket.date_filed:
+            docket.date_filed = cluster_date
+            update_docket = True
+            
+        if precedential and not docket.precedential_status:
+            docket.precedential_status = precedential[:50]
+            update_docket = True
+            
+        if update_docket:
+            # Recalculate decision days if dates were updated
+            if docket.date_filed and docket.date_terminated:
+                docket.decision_days = (docket.date_terminated - docket.date_filed).days
+            docket.save()
+        
         defaults_dict = {
             'docket': docket,
             'case_name': cluster_data.get('case_name', '')[:1000],
             'case_name_short': cluster_data.get('case_name_short', '')[:500],
             'case_name_full': cluster_data.get('case_name_full', '')[:2000],
-            'date_filed': DataProcessor.parse_date(cluster_data.get('date_filed')),
+            'date_filed': cluster_date,
             'citation_count': cluster_data.get('citation_count', 0),
         }
         
@@ -288,7 +455,7 @@ class DataProcessor:
         embedding = generate_embedding(opinion_text) if opinion_text else None
         
         defaults_dict = {
-            'cluster': cluster,  # Changed from 'docket' to 'cluster'
+            'cluster': cluster,
             'type': data.get('type', '010combined'),
             'author': author,
             'plain_text': data.get('plain_text', ''),
@@ -364,75 +531,7 @@ class DataProcessor:
         action = "Created" if created else "Found"
         logger.debug(f"{action} judge-docket relation: {judge.full_name} - {docket.case_name_short}")
         return relation
-    
-    @staticmethod
-    @transaction.atomic
-    def process_case_outcome(docket: Docket, outcome_type: str, 
-                           disposition: str = '', precedential_status: str = '') -> CaseOutcome:
-        """Process and save case outcome"""
-        # Calculate decision days
-        decision_days = None
-        if docket.date_filed and docket.date_terminated:
-            delta = docket.date_terminated - docket.date_filed
-            decision_days = delta.days
-        
-        outcome, created = CaseOutcome.objects.update_or_create(
-            docket=docket,
-            defaults={
-                'outcome_type': outcome_type,
-                'decision_days': decision_days,
-                'disposition': disposition,
-                'precedential_status': precedential_status,
-            }
-        )
-        
-        action = "Created" if created else "Updated"
-        logger.info(f"{action} case outcome: {docket.case_name_short} - {outcome_type}")
-        return outcome
-    
-    @staticmethod
-    def batch_process_courts(courts_data: List[Dict]) -> int:
-        """Batch process multiple courts"""
-        count = 0
-        for court_data in courts_data:
-            try:
-                DataProcessor.process_court(court_data)
-                count += 1
-            except Exception as e:
-                logger.error(f"Error processing court: {str(e)}")
-        
-        logger.info(f"Processed {count} courts")
-        return count
-    
-    @staticmethod
-    def batch_process_judges(judges_data: List[Dict]) -> int:
-        """Batch process multiple judges"""
-        count = 0
-        for judge_data in judges_data:
-            try:
-                DataProcessor.process_judge(judge_data)
-                count += 1
-            except Exception as e:
-                logger.error(f"Error processing judge: {str(e)}")
-        
-        logger.info(f"Processed {count} judges")
-        return count
-    
-    @staticmethod
-    def batch_process_dockets(dockets_data: List[Dict]) -> int:
-        """Batch process multiple dockets"""
-        count = 0
-        for docket_data in dockets_data:
-            try:
-                DataProcessor.process_docket(docket_data)
-                count += 1
-            except Exception as e:
-                logger.error(f"Error processing docket: {str(e)}")
-        
-        logger.info(f"Processed {count} dockets")
-        return count
 
 
 # Singleton instance
 data_processor = DataProcessor()
-
