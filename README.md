@@ -672,3 +672,17 @@ Extension: pgvector
 ---
 
 **System is fully operational and ready to use!** 🚀
+
+
+# Skip existing judges (default)
+python manage.py fetch_judges_deep_batch --limit 100
+
+# Update existing judges
+python manage.py fetch_judges_deep_batch --limit 100 --force-update
+
+
+# Standard mode (fallback only)
+python manage.py enrich_judges_fjc
+# Force overwrite all data
+python manage.py enrich_judges_fjc --force
+
