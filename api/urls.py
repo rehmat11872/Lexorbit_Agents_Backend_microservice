@@ -11,8 +11,7 @@ from .views import (
     legal_research_query, case_prediction, semantic_search, statistics,
     legal_research_advanced, judge_case_history, citation_network,
     most_influential_cases, case_prediction_advanced, judges_search,
-    judge_analytics_summary, judge_analytics_overview,
-    ConversationListView, ConversationDetailView, ChatView
+    judge_analytics_summary, judge_analytics_overview
 )
 
 # Create router and register viewsets
@@ -48,11 +47,6 @@ urlpatterns = [
     
     # Statistics
     path('statistics/', statistics, name='statistics'),
-    
-    # Chat Endpoints
-    path('conversations/', ConversationListView.as_view(), name='conversation_list'),
-    path('conversations/<int:conversation_id>/', ConversationDetailView.as_view(), name='conversation_detail'),
-    path('conversations/<int:conversation_id>/chat/', ChatView.as_view(), name='chat'),
     
     # Router URLs (LAST)
     path('', include(router.urls)),
